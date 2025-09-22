@@ -1,0 +1,104 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run ergo with default video",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run with back contour",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run with curvature metric",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run after indentation fix",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run after contour tweak",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run after prefer_sign tweak",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run after nose-based orientation",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run after side var fix",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run with edge-based contour",
+			"type": "shell",
+			"command": "python3 -u \"/Users/remenyibenedek/Projekt/teszt /Main.py\"",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$python"
+			],
+			"group": "build"
+		}
+	]
+}

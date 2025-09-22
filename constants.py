@@ -17,3 +17,6 @@ ALPHA_ELBOW = 0.35
 ALPHA_KNEE  = 0.25
 ALPHA_HIP   = 0.25
 ALPHA_TRUNK = 0.50
+ALPHA_BACK  = 0.40
+BACK_HOLD_S = 0.5  # másodperc – utolsó jó hátkontúrt ennyi ideig tartjuk
+BACK_SIDE_HOLD_N = 6  # ennyi egymást követő frame kell oldalváltáshoz (hysteresis)

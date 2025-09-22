@@ -19,14 +19,22 @@ import cv2
 import mediapipe as mp
 import numpy as np
 from hud import draw_hud
-from utils_geom import calculate_angle, trunk_angle_deg, get_xy
+from utils_geom import (
+    calculate_angle,
+    trunk_angle_deg,
+    get_xy,
+    back_contour_from_mask,
+    back_curvature_metric,
+    back_bend_angle,
+    back_contour_from_edges,
+)
 from utils_filters import EMASmoother, WindowDerivative, WindowPeak
 from stroke_fsm import StrokeFSM
 from constants import (
     ENTER_THR, EXIT_THR, HOLD_N,
     SPM_MIN_S, SPM_MAX_S,
     TRUNK_DERIV_THR,
-    ALPHA_ELBOW, ALPHA_KNEE, ALPHA_HIP, ALPHA_TRUNK,
+    ALPHA_ELBOW, ALPHA_KNEE, ALPHA_HIP, ALPHA_TRUNK, ALPHA_BACK,
 )
 
 mp_drawing = mp.solutions.drawing_utils
@@ -71,8 +79,12 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
         print("Nem sikerült megnyitni a videót.")
         return
 
-    with mp_pose.Pose(min_detection_confidence=0.5,
-                      min_tracking_confidence=0.5) as pose:
+    with mp_pose.Pose(
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+        enable_segmentation=True,
+        smooth_segmentation=True,
+    ) as pose:
 
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         dt = 1.0 / float(fps)
@@ -82,6 +94,7 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
         hip_s   = EMASmoother(ALPHA_HIP)
         trunk_s = EMASmoother(ALPHA_TRUNK)
         knee_der = WindowDerivative(window=3, dt=dt)
+        back_s  = EMASmoother(ALPHA_BACK)
 
         trunk_peak   = WindowPeak(window=7, mode="max", tol=4.0)
         elbow_trough = WindowPeak(window=7, mode="min", tol=6.0)
@@ -95,6 +108,7 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
         prev_trunk: Optional[float] = None
         cue = DriveCue()
         fsm = StrokeFSM()
+    # Korábbi egyszerű verzióhoz visszaállítva: nincs kontúr-tartás és hiszterézis
 
         while True:
             ret, frame = cap.read()
@@ -109,6 +123,19 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
             results = pose.process(rgb)
             image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             image.flags.writeable = True
+
+            # Első apró lépés a hátgörbülethez: test-szegmentáció vizualizálása
+            if hasattr(results, 'segmentation_mask') and results.segmentation_mask is not None:
+                try:
+                    mask = results.segmentation_mask
+                    if mask is not None and mask.shape[:2] == image.shape[:2]:
+                        mask_bin = mask > 0.5  # küszöb (később finomítható)
+                        tint = np.array([200, 230, 255], dtype=np.uint8)  # világos kékes
+                        # Csak a maszk területén halvány színezés
+                        image[mask_bin] = (0.6 * image[mask_bin] + 0.4 * tint).astype(np.uint8)
+                except Exception:
+                    # Régebbi mp verzióknál előfordulhat eltérés – csendben kihagyjuk
+                    pass
 
             if results.pose_landmarks is None:
                 cv2.putText(image, "No pose detected", (30, 50),
@@ -127,6 +154,7 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
                 L_hip      = get_xy(lm, mp_pose.PoseLandmark.LEFT_HIP)
                 L_knee     = get_xy(lm, mp_pose.PoseLandmark.LEFT_KNEE)
                 L_ankle    = get_xy(lm, mp_pose.PoseLandmark.LEFT_ANKLE)
+                L_nose     = get_xy(lm, mp_pose.PoseLandmark.NOSE, min_vis=0.2)
 
                 req = [L_shoulder, L_elbow, L_wrist, L_hip, L_knee, L_ankle]
                 if any(v is None for v in req):
@@ -200,6 +228,84 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
                     # HUD
                     draw_hud(image, fsm, (angle_elbow, angle_knee, angle_hip, angle_trunk), knee_ddeg)
 
+                    # Hátgörbe előnézet (piros görbe): maszkból mintavétel a váll–csípő között
+                    if hasattr(results, 'segmentation_mask') and results.segmentation_mask is not None:
+                        try:
+                            # Hát oldal választása: orr (NOSE) melyik oldalán van a váll–csípő vonalnak?
+                            # Az orr a test "elülső" oldalán van; a hát a másik oldalon.
+                            prefer_sign = None
+                            try:
+                                sx, sy = L_shoulder
+                                hx, hy = L_hip
+                                vx, vy = (hx - sx), (hy - sy)
+                                nlen = (vx**2 + vy**2) ** 0.5 + 1e-9
+                                nx, ny = (-vy / nlen, vx / nlen)
+                                if L_nose is not None:
+                                    nx0, ny0 = L_nose
+                                    # váll pontra viszonyítva a NOSE vektor
+                                    dx, dy = (nx0 - sx), (ny0 - sy)
+                                    nose_side = dx * nx + dy * ny
+                                    # front oldal = sign(nose_side); back = ellenkező előjel
+                                    prefer_sign = -1 if nose_side > 0 else +1
+                                else:
+                                    # Fallback: könyök->csukló vektor alapján
+                                    ex, ey = L_elbow
+                                    wx, wy = L_wrist
+                                    awx, awy = (wx - ex), (wy - ey)
+                                    dot = awx * nx + awy * ny
+                                    prefer_sign = -1 if dot > 0 else +1
+                            except Exception:
+                                prefer_sign = None
+
+                            # Kontúr: először a sziluett (edge-based), utána fallback a sugaras maszk-módszer
+                            contour = back_contour_from_edges(
+                                results.segmentation_mask, L_shoulder, L_hip,
+                                prefer_sign=prefer_sign, n_keep=60, thresh=0.45,
+                            )
+                            if not contour:
+                                contour = back_contour_from_mask(
+                                    results.segmentation_mask, L_shoulder, L_hip,
+                                    n_samples=40, thresh=0.5, max_radius=30, prefer_sign=prefer_sign,
+                                )
+                            for j in range(1, len(contour)):
+                                x1, y1 = contour[j-1]
+                                x2, y2 = contour[j]
+                                cv2.line(image, (x1, y1), (x2, y2), (0, 0, 255), 3)
+
+                            # Gyors görbületi mérőszám
+                            if contour:
+                                ratio, max_dev = back_curvature_metric(
+                                    contour, L_shoulder, L_hip, image.shape
+                                )
+                                ratio_sm = back_s.update(ratio)
+                            else:
+                                ratio = 0.0; max_dev = 0.0; ratio_sm = back_s.update(0.0)
+                            # HUD sarokban ideiglenes kiírás
+                            cv2.putText(
+                                image,
+                                f"Back curve: {ratio_sm:.2f} (raw {ratio:.2f}, {int(max_dev)}px)",
+                                (30, 140),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,
+                                (0, 0, 255),
+                                2,
+                                cv2.LINE_AA,
+                            )
+
+                            bend_deg = back_bend_angle(contour, L_shoulder, L_hip, image.shape) if contour else 0.0
+                            cv2.putText(
+                                image,
+                                f"Back bend: {int(round(bend_deg))} deg",
+                                (30, 170),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,
+                                (0, 0, 255),
+                                2,
+                                cv2.LINE_AA,
+                            )
+                        except Exception:
+                            pass
+
             else:
                 cv2.putText(image, "Jelenleg a bal oldal támogatott", (30, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2, cv2.LINE_AA)
@@ -241,7 +347,7 @@ def main():
             return
         print(f"Alapértelmezett videó: {video}")
     video_feldolgozas(video_path=video, side=args.side)
-print('Szá')
+
 if __name__ == "__main__":
     main()
 
