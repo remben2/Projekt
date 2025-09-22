@@ -241,7 +241,7 @@ def main():
             return
         print(f"Alapértelmezett videó: {video}")
     video_feldolgozas(video_path=video, side=args.side)
-
+print('Szá')
 if __name__ == "__main__":
     main()
 
