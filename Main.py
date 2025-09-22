@@ -35,6 +35,7 @@ from constants import (
     SPM_MIN_S, SPM_MAX_S,
     TRUNK_DERIV_THR,
     ALPHA_ELBOW, ALPHA_KNEE, ALPHA_HIP, ALPHA_TRUNK, ALPHA_BACK,
+    CURVE_WARN, CURVE_ALERT, BEND_WARN, BEND_ALERT,
 )
 
 mp_drawing = mp.solutions.drawing_utils
@@ -68,7 +69,8 @@ def export_csv(fsm: StrokeFSM, path: str = "strokes.csv") -> None:
             "drive_ms","recovery_ms","ratio","spm","trunk_max_deg",
             "ratio_flag","spm_flag","trunk_flag",
             "catch_knee_min_deg","catch_trunk_deg",
-            "score_total","score_ratio","score_spm","score_posture"
+            "score_total","score_ratio","score_spm","score_posture",
+            "back_curve","back_bend"
         ])
         w.writerows(fsm.log)
     print(f"Mentve: {path}   sorok: {len(fsm.log)}")
@@ -95,6 +97,7 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
         trunk_s = EMASmoother(ALPHA_TRUNK)
         knee_der = WindowDerivative(window=3, dt=dt)
         back_s  = EMASmoother(ALPHA_BACK)
+        bend_s  = EMASmoother(0.45)  # enyhe simítás a derék szögre
 
         trunk_peak   = WindowPeak(window=7, mode="max", tol=4.0)
         elbow_trough = WindowPeak(window=7, mode="min", tol=6.0)
@@ -108,7 +111,7 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
         prev_trunk: Optional[float] = None
         cue = DriveCue()
         fsm = StrokeFSM()
-    # Korábbi egyszerű verzióhoz visszaállítva: nincs kontúr-tartás és hiszterézis
+        # Korábbi egyszerű verzióhoz visszaállítva: nincs kontúr-tartás és hiszterézis
 
         while True:
             ret, frame = cap.read()
@@ -280,29 +283,50 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
                                 ratio_sm = back_s.update(ratio)
                             else:
                                 ratio = 0.0; max_dev = 0.0; ratio_sm = back_s.update(0.0)
-                            # HUD sarokban ideiglenes kiírás
+                            # Színezés: zöld < sárga < piros (küszöbök a constants.py-ben)
+                            def pick_color_curve(val: float):
+                                if val >= CURVE_ALERT: return (0, 0, 255)  # piros
+                                if val >= CURVE_WARN:  return (0, 165, 255)  # narancs
+                                return (0, 200, 0)  # zöld
+
+                            # HUD: Back curve (lejjebb tolva, hogy ne takarja ki az alap HUD-ot)
+                            color_curve = pick_color_curve(ratio_sm)
+                            # kis jelző pont
+                            cv2.circle(image, (15, 260), 6, color_curve, thickness=-1)
                             cv2.putText(
                                 image,
                                 f"Back curve: {ratio_sm:.2f} (raw {ratio:.2f}, {int(max_dev)}px)",
-                                (30, 140),
+                                (30, 260),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
-                                (0, 0, 255),
+                                color_curve,
                                 2,
                                 cv2.LINE_AA,
                             )
 
-                            bend_deg = back_bend_angle(contour, L_shoulder, L_hip, image.shape) if contour else 0.0
+                            # Back bend (szög) + simítás
+                            bend_deg_raw = back_bend_angle(contour, L_shoulder, L_hip, image.shape) if contour else 0.0
+                            bend_deg = bend_s.update(bend_deg_raw)
+                            def pick_color_bend(val: float):
+                                if val <= BEND_ALERT: return (0, 0, 255)
+                                if val <= BEND_WARN:  return (0, 165, 255)
+                                return (0, 200, 0)
+
+                            color_bend = pick_color_bend(bend_deg)
+                            cv2.circle(image, (15, 300), 6, color_bend, thickness=-1)
                             cv2.putText(
                                 image,
                                 f"Back bend: {int(round(bend_deg))} deg",
-                                (30, 170),
+                                (30, 300),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
-                                (0, 0, 255),
+                                color_bend,
                                 2,
                                 cv2.LINE_AA,
                             )
+                            # Rögzítsük a pillanatnyi simított értékeket az FSM-be (következő stroke log-hoz)
+                            fsm.last_back_curve = float(ratio_sm)
+                            fsm.last_back_bend = float(bend_deg)
                         except Exception:
                             pass
 
@@ -338,7 +362,7 @@ def main():
            # os.path.join(os.path.dirname(__file__), "Test_02.mp4"),
            # os.path.join(os.path.dirname(__file__), "Test_03.mp4"),
            # os.path.join(os.path.dirname(__file__), "Test_04.mp4"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "Videos", "Test_05.mp4"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "Videos", "Test_06.mp4"),
             # os.path.join(os.path.dirname(os.path.dirname(__file__)), "Működő verzió", "Test_06.mp4"),
         ]
         video = next((p for p in candidates if os.path.exists(p)), None)
