@@ -362,7 +362,7 @@ def main():
            # os.path.join(os.path.dirname(__file__), "Test_02.mp4"),
            # os.path.join(os.path.dirname(__file__), "Test_03.mp4"),
            # os.path.join(os.path.dirname(__file__), "Test_04.mp4"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "Videos", "Test_05.mp4"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "Videos", "Test_07.mp4"),
             # os.path.join(os.path.dirname(os.path.dirname(__file__)), "Működő verzió", "Test_06.mp4"),
         ]
         video = next((p for p in candidates if os.path.exists(p)), None)
@@ -374,5 +374,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-    print("Feldolgozás befejezve.")
 
+print("Feldolgozás befejezve.")
