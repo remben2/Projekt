@@ -377,3 +377,4 @@ if __name__ == "__main__":
 
 print("Feldolgozás befejezve.")
 print("alma")
+print("lol")
