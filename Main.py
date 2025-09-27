@@ -36,6 +36,8 @@ from constants import (
     TRUNK_DERIV_THR,
     ALPHA_ELBOW, ALPHA_KNEE, ALPHA_HIP, ALPHA_TRUNK, ALPHA_BACK,
     CURVE_WARN, CURVE_ALERT, BEND_WARN, BEND_ALERT,
+    HANDLE_SIGMA_WARN, HANDLE_SIGMA_ALERT, HANDLE_RMS_WARN, HANDLE_RMS_ALERT,
+    HANDLE_SIGMA_ALPHA, HANDLE_RMS_ALPHA,
 )
 
 mp_drawing = mp.solutions.drawing_utils
@@ -69,8 +71,7 @@ def export_csv(fsm: StrokeFSM, path: str = "strokes.csv") -> None:
             "drive_ms","recovery_ms","ratio","spm","trunk_max_deg",
             "ratio_flag","spm_flag","trunk_flag",
             "catch_knee_min_deg","catch_trunk_deg",
-            "score_total","score_ratio","score_spm","score_posture",
-            "back_curve","back_bend"
+            "score_total","score_ratio","score_spm","score_posture"
         ])
         w.writerows(fsm.log)
     print(f"Mentve: {path}   sorok: {len(fsm.log)}")
@@ -90,6 +91,8 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
 
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         dt = 1.0 / float(fps)
+        # Nyél nyomvonal hossza ~0.8s (korlátok között)
+        trail_len = max(10, min(300, int(0.8 / dt)))
 
         elbow_s = EMASmoother(ALPHA_ELBOW)
         knee_s  = EMASmoother(ALPHA_KNEE)
@@ -98,6 +101,10 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
         knee_der = WindowDerivative(window=3, dt=dt)
         back_s  = EMASmoother(ALPHA_BACK)
         bend_s  = EMASmoother(0.45)  # enyhe simítás a derék szögre
+        # EMA-k a nyél metrikákhoz
+        sigma_s    = EMASmoother(HANDLE_SIGMA_ALPHA)
+        rms_drv_s  = EMASmoother(HANDLE_RMS_ALPHA)
+        rms_rcv_s  = EMASmoother(HANDLE_RMS_ALPHA)
 
         trunk_peak   = WindowPeak(window=7, mode="max", tol=4.0)
         elbow_trough = WindowPeak(window=7, mode="min", tol=6.0)
@@ -112,6 +119,11 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
         cue = DriveCue()
         fsm = StrokeFSM()
         # Korábbi egyszerű verzióhoz visszaállítva: nincs kontúr-tartás és hiszterézis
+        # Nyél-nyomvonal tároló (pixel koordináták)
+        handle_trail = deque(maxlen=trail_len)
+        handle_trail_rel_y = deque(maxlen=trail_len)  # normalizált y (csípőhöz viszonyítva)
+        handle_trail_rel_xy = deque(maxlen=trail_len) # normalizált (x,y) + fázis
+    # Catch dwell: teljesen eltávolítva
 
         while True:
             ret, frame = cap.read()
@@ -283,20 +295,21 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
                                 ratio_sm = back_s.update(ratio)
                             else:
                                 ratio = 0.0; max_dev = 0.0; ratio_sm = back_s.update(0.0)
-                            # Színezés: zöld < sárga < piros (küszöbök a constants.py-ben)
+                            # Színezés: zöld < narancs < piros (küszöbök constants.py-ből)
                             def pick_color_curve(val: float):
                                 if val >= CURVE_ALERT: return (0, 0, 255)  # piros
                                 if val >= CURVE_WARN:  return (0, 165, 255)  # narancs
                                 return (0, 200, 0)  # zöld
 
-                            # HUD: Back curve (lejjebb tolva, hogy ne takarja ki az alap HUD-ot)
+                            # HUD: Back curve
                             color_curve = pick_color_curve(ratio_sm)
-                            # kis jelző pont
-                            cv2.circle(image, (15, 260), 6, color_curve, thickness=-1)
+                            base_y = 190  # lejjebb vittük, hogy ne takarja a felső szövegeket
+                            # Színes pont a text előtt (Back curve)
+                            cv2.circle(image, (20, base_y-8), 6, color_curve, -1)
                             cv2.putText(
                                 image,
                                 f"Back curve: {ratio_sm:.2f} (raw {ratio:.2f}, {int(max_dev)}px)",
-                                (30, 260),
+                                (35, base_y),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
                                 color_curve,
@@ -313,22 +326,167 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
                                 return (0, 200, 0)
 
                             color_bend = pick_color_bend(bend_deg)
-                            cv2.circle(image, (15, 300), 6, color_bend, thickness=-1)
+                            # Második sor dot + text
+                            cv2.circle(image, (20, base_y+22-8), 6, color_bend, -1)
                             cv2.putText(
                                 image,
                                 f"Back bend: {int(round(bend_deg))} deg",
-                                (30, 300),
+                                (35, base_y+22),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
                                 color_bend,
                                 2,
                                 cv2.LINE_AA,
                             )
-                            # Rögzítsük a pillanatnyi simított értékeket az FSM-be (következő stroke log-hoz)
-                            fsm.last_back_curve = float(ratio_sm)
-                            fsm.last_back_bend = float(bend_deg)
+                            # Opcionális: CSV loghoz aktuális frame back metrikák (egyszerű megjelenítéshez fsm-ben is tárolhatnánk)
+                            # (Most csak a konzolba írnék debug célra, ha szükséges később bővíthetjük.)
+                            # print(f"DBG_BACK,{t_video:.2f},{ratio_sm:.3f},{bend_deg:.1f}")
                         except Exception:
                             pass
+
+                    # --- NYÉL FIGYELÉS – 1. apró lépés -----------------------------------------
+                    # A nyél helyének ideiglenes reprezentációja: bal csukló (L_wrist)
+                    # Jelenítsük meg a nyél pozícióját a CSÍPŐHÖZ képest normalizálva
+                    # (skála: váll–csípő távolság), így testarányfüggetlen lesz az érték.
+                    if L_wrist is not None and L_hip is not None and L_shoulder is not None:
+                        H_img, W_img = image.shape[:2]
+                        # Pixel koordináták
+                        wx = int(round(L_wrist[0] * W_img)); wy = int(round(L_wrist[1] * H_img))
+                        hx = int(round(L_hip[0] * W_img));   hy = int(round(L_hip[1] * H_img))
+                        sx = int(round(L_shoulder[0] * W_img)); sy = int(round(L_shoulder[1] * H_img))
+                        # Skála: váll–csípő távolság (min. 10 px a stabilitásért)
+                        scale = max(10.0, float(((sx - hx)**2 + (sy - hy)**2) ** 0.5))
+                        rel_x = (wx - hx) / scale
+                        rel_y = (wy - hy) / scale
+
+                        # Rajz: csípőnél egy kis kereszt, a "nyélnél" (csukló) sárga pont
+                        cv2.line(image, (hx - 6, hy), (hx + 6, hy), (0, 255, 255), 2)
+                        cv2.line(image, (hx, hy - 6), (hx, hy + 6), (0, 255, 255), 2)
+                        cv2.circle(image, (wx, wy), 6, (0, 255, 255), -1)
+
+                        # Catch zóna és dwell: eltávolítva
+
+                        # Nyomvonal frissítés és kirajzolás
+                        handle_trail.append((wx, wy))
+                        if len(handle_trail) >= 2:
+                            for i in range(1, len(handle_trail)):
+                                x1, y1 = handle_trail[i-1]
+                                x2, y2 = handle_trail[i]
+                                cv2.line(image, (x1, y1), (x2, y2), (0, 255, 255), 2)
+
+                        # HUD szöveg a back metrikák alatt
+                        hud_y = 190 + 22 * 2 + 8  # back curve + back bend alatt
+                        cv2.putText(
+                            image,
+                            f"Handle rel(hip): x={rel_x:+.2f}, y={rel_y:+.2f}",
+                            (35, hud_y),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0, 255, 255),
+                            2,
+                            cv2.LINE_AA,
+                        )
+                        # Waviness (σy) – opció 1: a normalizált y értékek szórása az utóbbi ~0.8s-ban
+                        handle_trail_rel_y.append(rel_y)
+                        if len(handle_trail_rel_y) >= 3:
+                            arr = np.array(handle_trail_rel_y, dtype=np.float32)
+                            sigma_y = float(np.std(arr))
+                        else:
+                            sigma_y = 0.0
+                        # EMA kijelzéshez
+                        sigma_disp = sigma_s.update(sigma_y)
+                        # Szín kiválasztás sigma_y-hoz
+                        def pick_color_sigma(val: float):
+                            if val >= HANDLE_SIGMA_ALERT: return (0, 0, 255)
+                            if val >= HANDLE_SIGMA_WARN:  return (0, 165, 255)
+                            return (0, 200, 0)
+                        color_sigma = pick_color_sigma(sigma_disp)
+                        # Színes pont + felirat
+                        cv2.circle(image, (20, hud_y + 22 - 8), 6, color_sigma, -1)
+                        cv2.putText(
+                            image,
+                                f"Handle waviness sigma_y: {sigma_disp:.3f}",
+                            (35, hud_y + 22),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            color_sigma,
+                            2,
+                            cv2.LINE_AA,
+                        )
+
+                        # Opció 2: Egyenes illesztés a trail-re (norm. rel koordinátákban) és RMS távolság
+                        # Tároljuk a (rel_x, rel_y, is_drive) pontokat
+                        is_drive = (fsm.state == "Drive")
+                        handle_trail_rel_xy.append((float(rel_x), float(rel_y), bool(is_drive)))
+
+                        def rms_line_fit(points: np.ndarray) -> float:
+                            # points: (N,2) normalizált koordináták
+                            if points.shape[0] < 3:
+                                return 0.0
+                            mean = points.mean(axis=0)
+                            centered = points - mean
+                            # PCA: legnagyobb sajátérték sajátvektora a főirány
+                            cov = centered.T @ centered / max(1, (points.shape[0] - 1))
+                            eigvals, eigvecs = np.linalg.eigh(cov)
+                            v = eigvecs[:, np.argmax(eigvals)]  # (2,)
+                            # ortogonális eltérés komponense
+                            proj = centered @ v
+                            recon = np.outer(proj, v)
+                            orth = centered - recon
+                            rms = float(np.sqrt(np.mean(np.sum(orth*orth, axis=1))))
+                            return rms
+
+                        # Szétválogatás Drive / Recovery
+                        if len(handle_trail_rel_xy) >= 5:
+                            pts = np.array([(x, y) for (x, y, _) in handle_trail_rel_xy], dtype=np.float32)
+                            flags = np.array([int(d) for (_, _, d) in handle_trail_rel_xy], dtype=np.int32)
+                            drv_pts = pts[flags == 1]
+                            rcv_pts = pts[flags == 0]
+                            rms_drv = rms_line_fit(drv_pts) if drv_pts.size else 0.0
+                            rms_rcv = rms_line_fit(rcv_pts) if rcv_pts.size else 0.0
+                        else:
+                            rms_drv = 0.0
+                            rms_rcv = 0.0
+
+                        # EMA a kijelzéshez
+                        rms_drv_disp = rms_drv_s.update(rms_drv)
+                        rms_rcv_disp = rms_rcv_s.update(rms_rcv)
+
+                        # HUD: két sorral lejjebb írjuk ki
+                        # Szín kiválasztás RMS-hez
+                        def pick_color_rms(val: float):
+                            if val >= HANDLE_RMS_ALERT: return (0, 0, 255)
+                            if val >= HANDLE_RMS_WARN:  return (0, 165, 255)
+                            return (0, 200, 0)
+                        color_rms_drv = pick_color_rms(rms_drv_disp)
+                        color_rms_rcv = pick_color_rms(rms_rcv_disp)
+
+                        # HUD: két sorral lejjebb írjuk ki, dot-tal
+                        cv2.circle(image, (20, hud_y + 44 - 8), 6, color_rms_drv, -1)
+                        cv2.putText(
+                            image,
+                            f"Handle straightness RMS (Drive): {rms_drv_disp:.3f}",
+                            (35, hud_y + 44),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            color_rms_drv,
+                            2,
+                            cv2.LINE_AA,
+                        )
+                        cv2.circle(image, (20, hud_y + 66 - 8), 6, color_rms_rcv, -1)
+                        cv2.putText(
+                            image,
+                            f"Handle straightness RMS (Recovery): {rms_rcv_disp:.3f}",
+                            (35, hud_y + 66),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            color_rms_rcv,
+                            2,
+                            cv2.LINE_AA,
+                        )
+
+                        # Catch dwell: eltávolítva
+                    # --------------------------------------------------------------------------------
 
             else:
                 cv2.putText(image, "Jelenleg a bal oldal támogatott", (30, 50),
@@ -362,7 +520,7 @@ def main():
            # os.path.join(os.path.dirname(__file__), "Test_02.mp4"),
            # os.path.join(os.path.dirname(__file__), "Test_03.mp4"),
            # os.path.join(os.path.dirname(__file__), "Test_04.mp4"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "Videos", "Test_07.mp4"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "Videos", "Test_05.mp4"),
             # os.path.join(os.path.dirname(os.path.dirname(__file__)), "Működő verzió", "Test_06.mp4"),
         ]
         video = next((p for p in candidates if os.path.exists(p)), None)
@@ -375,6 +533,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-print("Feldolgozás befejezve.")
-print("alma")
-print("lol")

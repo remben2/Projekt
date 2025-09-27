@@ -44,10 +44,6 @@ class StrokeFSM:
         self.last_score: Optional[Tuple[float, float, float, float]] = None
         self.last_catch_time: Optional[float] = None
 
-        # Back metrics (utolsó teljes stroke-hoz tartozó értékek)
-        self.last_back_curve: Optional[float] = None
-        self.last_back_bend: Optional[float] = None
-
         self.log = []
 
     # ----- minőségcímkék -----
@@ -136,9 +132,7 @@ class StrokeFSM:
                     self.log.append([
                         self.drive_ms, self.recovery_ms, self.ratio, self.spm,
                         self.last_trunk_max, flags[0], flags[1], flags[2],
-                        ck, ct, score, r_pts, s_pts, p_pts,
-                        (float('nan') if self.last_back_curve is None else float(self.last_back_curve)),
-                        (float('nan') if self.last_back_bend is None else float(self.last_back_bend)),
+                        ck, ct, score, r_pts, s_pts, p_pts
                     ])
                     self.pending_drive_ms = None
 
@@ -192,8 +186,6 @@ class StrokeFSM:
 
                 self.last_finish = now
                 self.last_trunk_max = self.trunk_max
-                # a Finish→Recovery átmenetnél nem változtatunk a back metrikákon;
-                # azokat a fő ciklus frissíti folyamatosan
 
                 self.state = "Recovery"
                 self.t0 = None
