@@ -57,3 +57,6 @@ def draw_hud(image, fsm, angles: Tuple[float, float, float, float], knee_ddeg: f
         elif len(fsm.last_score) == 5:
             sc, rpts, spts, ppts, back_curve_pts = fsm.last_score
             put(f"Score: {sc:.1f} (R {rpts:.0f} | S {spts:.0f} | P {ppts:.0f} | B {back_curve_pts:.0f})", (255, 220, 120))
+        elif len(fsm.last_score) == 6:
+            sc, rpts, spts, ppts, back_curve_pts, waviness_pts = fsm.last_score
+            put(f"Score: {sc:.1f} (R {rpts:.0f} | S {spts:.0f} | P {ppts:.0f} | B {back_curve_pts:.0f} | H {waviness_pts:.0f})", (255, 220, 120))

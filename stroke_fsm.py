@@ -47,10 +47,11 @@ class StrokeFSM:
         self.log = []
 
         # ÚJ: hátgörbület metrika
-        self.last_back_curve: Optional[float] = None
-
+        self.last_back_curve = None
         # ÚJ: fogás szórás metrika
-        self.last_handle_sigma: Optional[float] = None
+        self.last_handle_sigma = None
+        # ÚJ: nyél hullámzás metrika
+        self.last_handle_waviness = None
 
     # ----- minőségcímkék -----
     def quality_flags(self, ratio=None, spm=None, trunk_max=None) -> Tuple[str, str, str]:
@@ -111,10 +112,12 @@ class StrokeFSM:
         p_pts = posture_pts
         # Hátgörbület (0–20) - finomabb, lineáris pontozás
         back_curve = float(self.last_back_curve) if self.last_back_curve is not None else 0.0
-        # 0.0 = 20 pont, 1.0 = 0 pont, közte lineáris (még lazább értékelés)
         back_curve_pts = max(0.0, 20.0 * (1.0 - min(back_curve, 1.0) / 1.0))
-        total = round(ratio_pts + s_pts + p_pts + back_curve_pts, 1)
-        return total, ratio_pts, s_pts, p_pts, back_curve_pts
+        # Nyél hullámzás (0–10): 0.0 = 10 pont, 0.08 vagy nagyobb = 0 pont
+        waviness = float(self.last_handle_waviness) if self.last_handle_waviness is not None else 0.0
+        waviness_pts = max(0.0, 10.0 * (1.0 - min(waviness, 0.08) / 0.08))
+        total = round(ratio_pts + s_pts + p_pts + back_curve_pts + waviness_pts, 1)
+        return total, ratio_pts, s_pts, p_pts, back_curve_pts, waviness_pts
 
     # ----- állapotgép -----
     def update(self, knee_ddeg: float, drive_on: bool, finish_on: bool, knee_deg: float, t: float):
@@ -133,8 +136,8 @@ class StrokeFSM:
                     flags = self.quality_flags(self.ratio, self.spm, self.last_trunk_max)
                     self.last_flags = flags
 
-                    score, r_pts, s_pts, p_pts, back_curve_pts = self.stroke_score()
-                    self.last_score = (score, r_pts, s_pts, p_pts, back_curve_pts)
+                    score, r_pts, s_pts, p_pts, back_curve_pts, waviness_pts = self.stroke_score()
+                    self.last_score = (score, r_pts, s_pts, p_pts, back_curve_pts, waviness_pts)
 
                     ck = float(self.last_catch_knee) if self.last_catch_knee is not None else float('nan')
                     ct = float(self.last_catch_trunk) if self.last_catch_trunk is not None else float('nan')
@@ -142,7 +145,7 @@ class StrokeFSM:
                     self.log.append([
                         self.drive_ms, self.recovery_ms, self.ratio, self.spm,
                         self.last_trunk_max, flags[0], flags[1], flags[2],
-                        ck, ct, score, r_pts, s_pts, p_pts, back_curve_pts
+                        ck, ct, score, r_pts, s_pts, p_pts, back_curve_pts, waviness_pts
                     ])
                     self.pending_drive_ms = None
 

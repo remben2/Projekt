@@ -71,7 +71,7 @@ def export_csv(fsm: StrokeFSM, path: str = "strokes.csv") -> None:
             "drive_ms","recovery_ms","ratio","spm","trunk_max_deg",
             "ratio_flag","spm_flag","trunk_flag",
             "catch_knee_min_deg","catch_trunk_deg",
-            "score_total","score_ratio","score_spm","score_posture","score_back_curve"
+            "score_total","score_ratio","score_spm","score_posture","score_back_curve","score_handle_waviness"
         ])
         w.writerows(fsm.log)
     print(f"Mentve: {path}   sorok: {len(fsm.log)}")
@@ -397,6 +397,8 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
                             sigma_y = 0.0
                         # EMA kijelzéshez
                         sigma_disp = sigma_s.update(sigma_y)
+                        # Nyél hullámzás metrika mentése FSM-be
+                        fsm.last_handle_waviness = sigma_disp
                         # Szín kiválasztás sigma_y-hoz
                         def pick_color_sigma(val: float):
                             if val >= HANDLE_SIGMA_ALERT: return (0, 0, 255)
