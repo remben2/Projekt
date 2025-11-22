@@ -71,7 +71,7 @@ def export_csv(fsm: StrokeFSM, path: str = "strokes.csv") -> None:
             "drive_ms","recovery_ms","ratio","spm","trunk_max_deg",
             "ratio_flag","spm_flag","trunk_flag",
             "catch_knee_min_deg","catch_trunk_deg",
-            "score_total","score_ratio","score_spm","score_posture"
+            "score_total","score_ratio","score_spm","score_posture","score_back_curve"
         ])
         w.writerows(fsm.log)
     print(f"Mentve: {path}   sorok: {len(fsm.log)}")
@@ -295,6 +295,8 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
                                 ratio_sm = back_s.update(ratio)
                             else:
                                 ratio = 0.0; max_dev = 0.0; ratio_sm = back_s.update(0.0)
+                            # Hátgörbület score-hoz mentés
+                            fsm.last_back_curve = ratio_sm
                             # Színezés: zöld < narancs < piros (küszöbök constants.py-ből)
                             def pick_color_curve(val: float):
                                 if val >= CURVE_ALERT: return (0, 0, 255)  # piros
