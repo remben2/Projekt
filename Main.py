@@ -13,7 +13,7 @@ import argparse
 import csv
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import cv2
 import mediapipe as mp
@@ -32,8 +32,6 @@ from utils_filters import EMASmoother, WindowDerivative, WindowPeak
 from stroke_fsm import StrokeFSM
 from constants import (
     ENTER_THR, EXIT_THR, HOLD_N,
-    SPM_MIN_S, SPM_MAX_S,
-    TRUNK_DERIV_THR,
     ALPHA_ELBOW, ALPHA_KNEE, ALPHA_HIP, ALPHA_TRUNK, ALPHA_BACK,
     CURVE_WARN, CURVE_ALERT, BEND_WARN, BEND_ALERT,
     HANDLE_SIGMA_WARN, HANDLE_SIGMA_ALERT, HANDLE_RMS_WARN, HANDLE_RMS_ALERT,
