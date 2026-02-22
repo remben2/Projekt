@@ -344,10 +344,7 @@ def video_feldolgozas(video_path: str, side: str = "bal"):
                         except Exception:
                             pass
 
-                    # --- NYÉL FIGYELÉS – 1. apró lépés -----------------------------------------
-                    # A nyél helyének ideiglenes reprezentációja: bal csukló (L_wrist)
-                    # Jelenítsük meg a nyél pozícióját a CSÍPŐHÖZ képest normalizálva
-                    # (skála: váll–csípő távolság), így testarányfüggetlen lesz az érték.
+                    # Nyél nyomválal és metrikák
                     if L_wrist is not None and L_hip is not None and L_shoulder is not None:
                         H_img, W_img = image.shape[:2]
                         # Pixel koordináták
